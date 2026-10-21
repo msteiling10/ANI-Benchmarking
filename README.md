@@ -35,4 +35,7 @@ Scaffolds
 Size (Mb)
 
 Upload the TSV to the working directory.
-In CONFIGURATION ZONE of the ANI Pip
+In CONFIGURATION ZONE of the ANI Pipeline add the path of the tsv and the name of the organism for outfiles. 
+
+Running the code can be done with the following command:
+python ANI_Pipeline_V2.py

@@ -1,0 +1,344 @@
+import glob
+import os
+import random
+import re
+import subprocess
+import time
+import pandas as pd
+from Bio import Entrez
+
+
+'''this pipeline is made for paired end data'''
+
+# Configure NCBI Entrez
+Entrez.email = "msteiling@luc.edu"
+
+# ==============================================================================
+# CONFIGURATION ZONE
+# ==============================================================================
+organism = "Lactobacillus_gasseri" # Add the organism you are querying for file names
+infile = "Lactobacillus_gasseri.tsv" # Infile name 
+
+# Directory Outputs
+outfile_for_genomes = "testing_genomes" 
+outfile_for_fastq = "./fastq_data"
+OUTPUT_FOLDER = "./results"
+
+# Filtering Thresholds & Settings
+contamination_threshold = 5.0
+sequencing_tech = "Illumina HiSeq" # Matches 'Assembly Sequencing Tech' column
+CONDA_ENV = "ANI_conda_environment" # Conda environment containing all required tools
+
+# Tool Settings
+SUBSAMPLES = 2
+NO_READS_IN_SUBSAMPLE = 100000 # Placeholder, overwritten dynamically by 20x calculation
+THREADS = "15"
+RANDOM_SEED = 1 # Set random seed so the same area of genome is grabbed 
+# ==============================================================================
+
+
+def run_command(cmd_str_or_list):
+    """Executes a command directly or wrapped inside 'conda run' if CONDA_ENV is set."""
+    if CONDA_ENV:
+        if isinstance(cmd_str_or_list, list):
+            cmd = ["conda", "run", "-n", CONDA_ENV] + cmd_str_or_list
+            subprocess.run(cmd, check=True)
+        else:
+            cmd = f"conda run -n {CONDA_ENV} {cmd_str_or_list}"
+            subprocess.run(cmd, shell=True, check=True)
+    else:
+        if isinstance(cmd_str_or_list, list):
+            subprocess.run(cmd_str_or_list, check=True)
+        else:
+            subprocess.run(cmd_str_or_list, shell=True, check=True)
+
+
+def count_reads(fastq_path):
+    """Calculates total reads in a FASTQ file (4 lines per read)."""
+    line_count = 0
+    with open(fastq_path, "r") as f:
+        for _ in f:
+            line_count += 1
+    return line_count // 4
+
+
+def init_folders(output_folder, sample_no):
+    """Creates directory tree for subsamples, trimmed outputs, and assemblies."""
+    ss_dir = os.path.join(output_folder, sample_no, "ss")
+    trim_dir = os.path.join(output_folder, sample_no, "trim_ss")
+    assemble_dir = os.path.join(output_folder, sample_no, "assemble")
+
+    os.makedirs(ss_dir, exist_ok=True)
+    os.makedirs(trim_dir, exist_ok=True)
+    os.makedirs(assemble_dir, exist_ok=True)
+
+    return ss_dir, trim_dir, assemble_dir
+
+
+# --- PIPELINE STEP 1: DOWNLOAD GENOMES ---
+def download_via_ncbi_genome_download(acc_file, out_dir):
+    cmd = f"ncbi-genome-download --section refseq --assembly-accessions {acc_file} --formats fasta,gff --output-folder {out_dir} bacteria"
+    print("=== Executing ncbi-genome-download ===")
+    run_command(cmd)
+    print(f"Genomes saved in directory: {out_dir}\n")
+
+
+def calculate_target_reads_for_20x(genomes_dir, sample_fastq_path):
+    """
+    Scans downloaded genome fasta files, calculates average genome length,
+    and determines required reads per file for 20x coverage.
+    """
+    print("=== Calculating 20x Coverage Target based on Downloaded Genomes ===")
+    
+    fasta_files = glob.glob(os.path.join(genomes_dir, "**", "*.fna"), recursive=True) + \
+                  glob.glob(os.path.join(genomes_dir, "**", "*.fasta"), recursive=True)
+    
+    if not fasta_files:
+        print("Warning: No genome FASTA files found. Falling back to default read count.")
+        return NO_READS_IN_SUBSAMPLE
+
+    genome_lengths = []
+    for fasta in fasta_files:
+        current_len = 0
+        with open(fasta, "r") as f:
+            for line in f:
+                if not line.startswith(">"):
+                    current_len += len(line.strip())
+        if current_len > 0:
+            genome_lengths.append(current_len)
+
+    if not genome_lengths:
+        return NO_READS_IN_SUBSAMPLE
+
+    avg_genome_length = sum(genome_lengths) / len(genome_lengths)
+    
+    read_lengths = []
+    with open(sample_fastq_path, "r") as f:
+        for i, line in enumerate(f):
+            if i % 4 == 1:
+                read_lengths.append(len(line.strip()))
+            if len(read_lengths) >= 100:
+                break
+                
+    avg_read_length = sum(read_lengths) / len(read_lengths) if read_lengths else 150
+
+    target_total_bases = avg_genome_length * 20
+    target_reads_per_file = int((target_total_bases / 2) / avg_read_length)
+
+    print(f"  - Analyzed {len(genome_lengths)} reference genomes.")
+    print(f"  - Average Genome Length: {avg_genome_length:,.0f} bp")
+    print(f"  - Calculated Reads per FASTQ file for 20x: {target_reads_per_file:,} reads\n")
+    
+    return target_reads_per_file
+
+
+# --- PIPELINE STEP 2: FETCH FASTQS VIA SRA ---
+def download_fastqs_from_biosamples(filtered_df, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
+
+    biosamples = filtered_df["Assembly BioSample Accession"].dropna().unique().tolist()
+    assembly_accessions = filtered_df["Assembly Accession"].dropna().unique().tolist()
+    
+    queries = list(set(biosamples + assembly_accessions))
+    print(f"=== Fetching SRA Run IDs for {len(queries)} target identifiers ===")
+
+    srr_runs = set()
+    for q in queries:
+        query_term = f'"{q}"'
+        print(f"Searching SRA for: {q}...")
+        try:
+            handle = Entrez.esearch(db="sra", term=query_term, retmax=20)
+            record = Entrez.read(handle)
+            handle.close()
+
+            id_list = record.get("IdList", [])
+            print(f"  -> Found SRA internal IDs: {id_list}")
+            
+            if id_list:
+                sum_handle = Entrez.esummary(db="sra", id=",".join(id_list))
+                sum_bytes = sum_handle.read()
+                sum_handle.close()
+
+                # Decode bytes to string so regex can parse it successfully
+                sum_text = sum_bytes.decode('utf-8', errors='ignore')
+
+                found_runs = re.findall(r'\b([SED]RR\d+)\b', sum_text)
+                print(f"  -> Found Run accession(s): {found_runs}")
+                for r in found_runs:
+                    srr_runs.add(r)
+            time.sleep(0.3)
+        except Exception as e:
+            print(f"Error finding SRA run for {q}: {e}")
+
+    srr_list = list(srr_runs)
+    if not srr_list:
+        print("\n[WARNING]: No SRA run IDs were found for the queried identifiers.")
+        return
+
+    print(f"=== Executing fasterq-dump for {len(srr_list)} unique runs ===")
+    for srr in srr_list:
+        print(f"Downloading FASTQ for {srr}...")
+        cmd = f"fasterq-dump --split-files --outdir {out_dir} {srr}"
+        run_command(cmd)
+        
+# --- PIPELINE STEP 3: SUBSAMPLE, TRIM, AND ASSEMBLE ---
+def subsample_trim_assemble_paired_end(
+    data_folder, output_folder, subsamples, no_reads_in_subsample
+):
+    all_fastqs = sorted(glob.glob(os.path.join(data_folder, "*.fastq")))
+    if not all_fastqs:
+        print(f"No FASTQ files found in {data_folder}!")
+        return
+
+    sample_pairs = {}
+    for filepath in all_fastqs:
+        filename = os.path.basename(filepath)
+        base_name = filename.split(".")[0]
+        if base_name.endswith("_1"):
+            sample_id = base_name[:-2]
+            sample_pairs.setdefault(sample_id, {})["R1"] = filepath
+        elif base_name.endswith("_2"):
+            sample_id = base_name[:-2]
+            sample_pairs.setdefault(sample_id, {})["R2"] = filepath
+
+    valid_pairs = []
+    for sample_id, reads in sample_pairs.items():
+        if "R1" in reads and "R2" in reads:
+            valid_pairs.append((sample_id, reads["R1"], reads["R2"]))
+
+    print(f"=== Successfully validated {len(valid_pairs)} paired-end samples ===")
+
+    for sample_no, fastq1_path, fastq2_path in valid_pairs:
+        ss_dir, trim_dir, assemble_dir = init_folders(output_folder, sample_no)
+        no_reads_in_sample = count_reads(fastq1_path)
+        reads_to_take = min(no_reads_in_subsample, no_reads_in_sample)
+
+        random.seed(RANDOM_SEED)
+        random_seeds = random.sample(range(0, no_reads_in_sample), min(subsamples, no_reads_in_sample))
+
+        for index, seed in enumerate(random_seeds):
+            print(f"\n=== Sample {sample_no} | Subsample Run {index+1}/{len(random_seeds)} (Seed: {seed}) ===")
+            
+            ss_f1 = os.path.join(ss_dir, f"{sample_no}_1_ss{index}.fastq")
+            ss_f2 = os.path.join(ss_dir, f"{sample_no}_2_ss{index}.fastq")
+
+            run_command(f"seqtk sample -s{seed} {fastq1_path} {reads_to_take} > {ss_f1}")
+            run_command(f"seqtk sample -s{seed} {fastq2_path} {reads_to_take} > {ss_f2}")
+
+            trim_f1 = os.path.join(trim_dir, f"{sample_no}_1_ss{index}_trim.fastq")
+            trim_f2 = os.path.join(trim_dir, f"{sample_no}_2_ss{index}_trim.fastq")
+            stats_file = os.path.join(trim_dir, f"{sample_no}_ss{index}_trim.stats")
+
+            bbduk_cmd = [
+                "bbduk.sh", "-Xmx1G", "overwrite=t",
+                f"in1={ss_f1}", f"in2={ss_f2}",
+                f"out1={trim_f1}", f"out2={trim_f2}",
+                "qtrim=rl", "trimq=20", "ftl=15", "ftr=135",
+                "maq=20", "maxns=0", f"stats={stats_file}",
+                "statscolumns=5", f"threads={THREADS}",
+            ]
+            run_command(bbduk_cmd)
+
+            sample_assembly_out = os.path.join(assemble_dir, f"{sample_no}_ss{index}_assembly")
+            spades_cmd = [
+                "spades.py", "--only-assembler", "-t", THREADS,
+                "-1", trim_f1, "-2", trim_f2, "-o", sample_assembly_out,
+            ]
+            run_command(spades_cmd)
+
+    print("\nAll subsampling, trimming, and assembly operations complete!")
+
+# --- PIPELINE STEP 4: RUN FASTANI BENCHMARK ---
+def run_fast_ani(output_folder, genomes_dir):
+    """
+    Runs FastANI comparing all assembled contigs against the downloaded reference genomes.
+    """
+    print("=== Executing FastANI Benchmark ===")
+    
+    # Locate all reference genomes (.fna or .fasta)
+    ref_files = glob.glob(os.path.join(genomes_dir, "**", "*.fna"), recursive=True) + \
+                glob.glob(os.path.join(genomes_dir, "**", "*.fasta"), recursive=True)
+    
+    if not ref_files:
+        print("[WARNING]: No reference genomes found for FastANI.")
+        return
+
+    # Create a text file containing paths to all reference genomes (required by FastANI --refList)
+    ref_list_path = "reference_genomes_list.txt"
+    with open(ref_list_path, "w") as f:
+        for ref in ref_files:
+            f.write(f"{ref}\n")
+
+    # Locate all assembled contigs from SPAdes outputs
+    contig_files = glob.glob(os.path.join(output_folder, "**", "contigs.fasta"), recursive=True)
+    
+    if not contig_files:
+        print("[WARNING]: No assembled contigs found to run FastANI against.")
+        return
+
+    os.makedirs("fastani_results", exist_ok=True)
+
+    for query_contig in contig_files:
+        # Extract sample name from path for clean output naming
+        path_parts = query_contig.split(os.sep)
+        sample_name = path_parts[-3] # Adjust based on your folder structure: results/SAMPLE/assemble/...
+        subsample_id = path_parts[-2].replace("_assembly", "")
+        
+        output_file = os.path.join("fastani_results", f"{sample_name}_{subsample_id}_fastani.txt")
+        
+        fastani_cmd = [
+            "fastANI",
+            "--query", query_contig,
+            "--refList", ref_list_path,
+            "--output", output_file,
+            "--threads", THREADS
+        ]
+        
+        print(f"Running FastANI for {sample_name} ({subsample_id})...")
+        try:
+            run_command(fastani_cmd)
+            print(f"  -> Saved output to {output_file}")
+        except Exception as e:
+            print(f"Error running FastANI for {query_contig}: {e}")
+# ==============================================================================
+# MAIN EXECUTION PIPELINE
+# ==============================================================================
+if __name__ == "__main__":
+    print("=== Pipeline Started ===")
+    df = pd.read_csv(infile, sep="\t")
+
+    # 1. Filter by contamination threshold and sequencing technology
+    df_filtered = df[
+        (df["CheckM contamination"] <= contamination_threshold) &
+        (df["Assembly Sequencing Tech"] == sequencing_tech)
+    ]
+
+    # 2. Sort by CheckM completeness in descending order and take top 10
+    df_filtered = df_filtered.sort_values(by="CheckM completeness", ascending=False)
+    
+    max_samples = 10
+    df_filtered = df_filtered.head(max_samples)
+    
+    print(f"Taking top {len(df_filtered)} samples based on highest CheckM completeness.")
+
+    accession_file = f"{organism}_download_accessions.txt"
+    df_filtered["Assembly Accession"].to_csv(accession_file, index=False, header=False)
+
+    # Executions
+    download_via_ncbi_genome_download(accession_file, out_dir=outfile_for_genomes)
+    download_fastqs_from_biosamples(df_filtered, out_dir=outfile_for_fastq)
+
+    sample_fastqs = glob.glob(os.path.join(outfile_for_fastq, "*.fastq"))
+    dynamic_reads_target = NO_READS_IN_SUBSAMPLE
+    if sample_fastqs:
+        dynamic_reads_target = calculate_target_reads_for_20x(outfile_for_genomes, sample_fastqs[0])
+
+    subsample_trim_assemble_paired_end(
+        data_folder=outfile_for_fastq,
+        output_folder=OUTPUT_FOLDER,
+        subsamples=SUBSAMPLES,
+        no_reads_in_subsample=dynamic_reads_target,
+    )
+    
+    # Run FastANI benchmark on the assembled outputs (properly aligned)
+    run_fast_ani(output_folder=OUTPUT_FOLDER, genomes_dir=outfile_for_genomes)

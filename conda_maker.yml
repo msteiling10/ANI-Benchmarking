@@ -1,0 +1,14 @@
+name: ANI_conda_environment
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10
+  - ncbi-genome-download
+  - sra-tools
+  - seqtk
+  - bbmap
+  - spades
+
+  

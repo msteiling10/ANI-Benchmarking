@@ -9,3 +9,11 @@ I have tried to address this by setting parameters by calculating average genome
 I might change my selected organisms for the sake of the project. 
 
 I also will be using FastANI, PyANI, and MASH, they all produce similar metrics via different algorthims and I have decided they would be more appropirate for benchmarking. 
+
+Once the ANI algorithms are sucessfully running, the statistics should be easy due to the fact it will just be a table of floats
+I am imagining a heat map as well.
+
+Smaller upcoming changes:
+Formatting the README
+Commenting code more 
+Adding refrences -- including debugging through Gemini 

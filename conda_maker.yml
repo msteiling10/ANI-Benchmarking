@@ -10,5 +10,8 @@ dependencies:
   - seqtk
   - bbmap
   - spades
+  - pyani
+  - fastani
+  - mash
 
   

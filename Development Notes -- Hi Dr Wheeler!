@@ -1,0 +1,11 @@
+Development up to 10/20/2026
+
+So far this pipeline can successfully subsample, trim and assemble data. I need to address the fact that some organisms I initilally selected are not meeting
+my initial thoughts on quality/completeness/contamination. 
+
+I have elected to build with Lactobacillus gasseri data -- A decent amount is from the Putonti Lab so I know actual data exists.
+
+I have tried to address this by setting parameters by calculating average genome size and finding top ten completeness. This has yet to pan out for smaller datasets.
+I might change my selected organisms for the sake of the project. 
+
+I also will be using FastANI, PyANI, and MASH, they all produce similar metrics via different algorthims and I have decided they would be more appropirate for benchmarking. 

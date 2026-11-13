@@ -17,7 +17,7 @@ mash --version
 pyani --version 
 ```
 
-Ensure the conda envrionment is activated, this code is available in the <u>conda_maker_code.txt</u> and can be copied and pasted into the terminal. 
+Ensure the conda envrionment is activated, this code is available in the <ins>conda_maker_code.txt</ins> and can be copied and pasted into the terminal. 
 
 To Run Code:
 

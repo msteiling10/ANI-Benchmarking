@@ -1,6 +1,18 @@
 # ANI-Benchmarking
 
+#Introduction
 This code is being developed to benchmark three genome comparison tools against one another. The selected tools are currently FastANI, PyANI, and MASH. FastANI and PyANI produce percent identities, while MASH produces a value between 0-1. MASH results can be converted into a comparable percentage with simple math. 
+
+#Clone This Repository
+
+First, check that git is installed in your environment
+```Bash
+git --version
+```
+Next, navigate to the directory you plan to work in
+```Bash
+cd /path/to/directory/or/folder
+```
 
 To install necessary tools, the conda_maker.yml can be uploaded to the working directory. Then the text file, conda_maker_code.txt can be opened and the text copied and pasted into the terminal to install all tools. Additionally, you might need to install python pandas and python biopython. This can be done with the following code run in the terminal:
 

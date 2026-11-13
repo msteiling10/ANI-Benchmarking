@@ -40,20 +40,22 @@ Ensure the conda envrionment is activated, this code is available in the <ins>co
 
 A TSV must be downloaded from the NCBI Genome Website -- https://www.ncbi.nlm.nih.gov/datasets/genome/
 Start by searching for the organism needed
+
 Ensure the following headers are included in the tsv:
-Assembly
-BioSample
-GenBank
-Level
-RefSeq
-Release date
-Sequencing technology
-Submitter
-Annotation
-CheckM completeness (%)
-CheckM contamination (%)
-Scaffolds
-Size (Mb)
+Assembly\
+BioSample\
+GenBank\
+Level\
+RefSeq\
+Release date\
+Sequencing technology\
+Submitter\
+Annotation\
+CheckM completeness (%)\
+CheckM contamination (%)\
+Scaffolds\
+Size (Mb)\
+\
 
 Upload the TSV to the working directory.
 In CONFIGURATION ZONE of the ANI Pipeline add the path of the tsv and the name of the organism for outfiles. 

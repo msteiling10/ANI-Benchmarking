@@ -4,14 +4,18 @@ This code is being developed to benchmark three genome comparison tools against 
 
 To install necessary tools, the conda_maker.yml can be uploaded to the working directory. Then the text file, conda_maker_code.txt can be opened and the text copied and pasted into the terminal to install all tools. Additionally, you might need to install python pandas and python biopython. This can be done with the following code run in the terminal:
 
+```bash
 pip install pandas
 pip install biopython
+```
 
 You can check versions via these examples pasted in the terminal:
 
+```bash
 fastani --version
 mash --version
 pyani --version 
+```
 
 Ensure the conda envrionment is activated, this code is available in the conda_maker_code.txt and can be copied and pasted into the terminal. 
 

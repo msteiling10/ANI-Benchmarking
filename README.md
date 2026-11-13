@@ -13,7 +13,12 @@ Next, navigate to the directory you plan to work in
 ```Bash
 cd /path/to/directory/or/folder
 ```
+Finally, clone this repository in your working directory
+```Bash
+git clone git@github.com:msteiling10/ANI-Benchmarking.git
+```
 
+## Begin Install of Necessary Tools
 To install necessary tools, the conda_maker.yml can be uploaded to the working directory. Then the text file, conda_maker_code.txt can be opened and the text copied and pasted into the terminal to install all tools. Additionally, you might need to install python pandas and python biopython. This can be done with the following code run in the terminal:
 
 ```bash
@@ -29,9 +34,9 @@ mash --version
 pyani --version 
 ```
 
-Ensure the conda envrionment is activated, this code is available in the <ins>conda_maker_code.txt</ins> and can be copied and pasted into the terminal. 
+Ensure the conda envrionment is activated, this code is available in the <ins>conda_maker_code.txt</ins> and can be copied and pasted into the terminal. This should allow necessary tools to be downloaded in an easy and streamlined manner. 
 
-To Run Code:
+## Basics to Run Code:
 
 A TSV must be downloaded from the NCBI Genome Website -- https://www.ncbi.nlm.nih.gov/datasets/genome/
 Start by searching for the organism needed

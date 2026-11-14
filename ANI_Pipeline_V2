@@ -8,16 +8,16 @@ import pandas as pd
 from Bio import Entrez
 
 
-'''this pipeline is made for paired end data'''
+'''this pipeline is made for paired end data, ideally Illumina. I recognize the limitations this places on analysis'''
 
 # Configure NCBI Entrez
-Entrez.email = "msteiling@luc.edu"
+Entrez.email = "msteiling@luc.edu" #replace this with your email
 
 # ==============================================================================
-# CONFIGURATION ZONE
+# CONFIGURATION ZONE - Update various parameters here
 # ==============================================================================
-organism = "Lactobacillus_gasseri" # Add the organism you are querying for file names
-infile = "Lactobacillus_gasseri.tsv" # Infile name 
+organism = "Lactobacillus_gasseri" # Add the organism you are querying for file names, I recommend no gaps
+infile = "Lactobacillus_gasseri.tsv" # Infile name, formatted as tsv
 
 # Directory Outputs
 outfile_for_genomes = "testing_genomes" 
@@ -25,20 +25,21 @@ outfile_for_fastq = "./fastq_data"
 OUTPUT_FOLDER = "./results"
 
 # Filtering Thresholds & Settings
-contamination_threshold = 5.0
-sequencing_tech = "Illumina HiSeq" # Matches 'Assembly Sequencing Tech' column
-CONDA_ENV = "ANI_conda_environment" # Conda environment containing all required tools
+contamination_threshold = 5.0 #this number can be adjusted to allow for more or less contamination 
+sequencing_tech = "Illumina HiSeq" # Matches 'Assembly Sequencing Tech' column, should name of this column change in the .tsv, update
+CONDA_ENV = "ANI_conda_environment" # Conda environment containing all required tools 
 
 # Tool Settings
-SUBSAMPLES = 2
+SUBSAMPLES = 2 #this controls the number of subsamples, high numbers will take longer
 NO_READS_IN_SUBSAMPLE = 100000 # Placeholder, overwritten dynamically by 20x calculation
-THREADS = "15"
+THREADS = "15" #update number of used threads here
 RANDOM_SEED = 1 # Set random seed so the same area of genome is grabbed 
+NCBI_GENOME_SECTION = "bacteria" #what section of ncbi we take genomes from 
 # ==============================================================================
 
 
 def run_command(cmd_str_or_list):
-    """Executes a command directly or wrapped inside 'conda run' if CONDA_ENV is set."""
+    """Executes a command directly or wrapped inside 'conda run' if CONDA_ENV is set. This allows for easy access to tools"""
     if CONDA_ENV:
         if isinstance(cmd_str_or_list, list):
             cmd = ["conda", "run", "-n", CONDA_ENV] + cmd_str_or_list
@@ -53,7 +54,7 @@ def run_command(cmd_str_or_list):
             subprocess.run(cmd_str_or_list, shell=True, check=True)
 
 
-def count_reads(fastq_path):
+def count_reads(fastq_path): #this helps ensure we are only using paired end, FASTQ formatted data
     """Calculates total reads in a FASTQ file (4 lines per read)."""
     line_count = 0
     with open(fastq_path, "r") as f:
@@ -62,87 +63,88 @@ def count_reads(fastq_path):
     return line_count // 4
 
 
-def init_folders(output_folder, sample_no):
+def init_folders(output_folder, sample_no): #begin manking folders needed to run these processes 
     """Creates directory tree for subsamples, trimmed outputs, and assemblies."""
-    ss_dir = os.path.join(output_folder, sample_no, "ss")
-    trim_dir = os.path.join(output_folder, sample_no, "trim_ss")
-    assemble_dir = os.path.join(output_folder, sample_no, "assemble")
+    ss_dir = os.path.join(output_folder, sample_no, "ss") #subsamples here
+    trim_dir = os.path.join(output_folder, sample_no, "trim_ss") #trimmed data here
+    assemble_dir = os.path.join(output_folder, sample_no, "assemble") #assembled data here 
 
-    os.makedirs(ss_dir, exist_ok=True)
+    os.makedirs(ss_dir, exist_ok=True) #chunk that makes directories 
     os.makedirs(trim_dir, exist_ok=True)
     os.makedirs(assemble_dir, exist_ok=True)
 
-    return ss_dir, trim_dir, assemble_dir
+    return ss_dir, trim_dir, assemble_dir #return the directories 
 
 
 # --- PIPELINE STEP 1: DOWNLOAD GENOMES ---
-def download_via_ncbi_genome_download(acc_file, out_dir):
-    cmd = f"ncbi-genome-download --section refseq --assembly-accessions {acc_file} --formats fasta,gff --output-folder {out_dir} bacteria"
-    print("=== Executing ncbi-genome-download ===")
-    run_command(cmd)
-    print(f"Genomes saved in directory: {out_dir}\n")
+#begins with downloading genomes from ncbi, this should pair smoothly with the .tsv
+def download_via_ncbi_genome_download(acc_file, out_dir): #command uses ncbi-genome-download tool under refseq, using fasta to the output folder
+    cmd = f"ncbi-genome-download --section refseq --assembly-accessions {acc_file} --formats fasta,gff --output-folder {out_dir} {NCBI_GENOME_SECTION}"
+    print("=== Executing ncbi-genome-download ===") #comfort running message
+    run_command(cmd) #run the command string from above
+    print(f"Genomes saved in directory: {out_dir}\n") #comfort running message
 
 
 def calculate_target_reads_for_20x(genomes_dir, sample_fastq_path):
     """
     Scans downloaded genome fasta files, calculates average genome length,
-    and determines required reads per file for 20x coverage.
+    and determines required reads per file for 20x coverage. 20x is recommended coverage based on Putonti Lab assessments 
     """
-    print("=== Calculating 20x Coverage Target based on Downloaded Genomes ===")
+    print("=== Calculating 20x Coverage Target based on Downloaded Genomes ===") #comfort running message
     
     fasta_files = glob.glob(os.path.join(genomes_dir, "**", "*.fna"), recursive=True) + \
-                  glob.glob(os.path.join(genomes_dir, "**", "*.fasta"), recursive=True)
+                  glob.glob(os.path.join(genomes_dir, "**", "*.fasta"), recursive=True) #double wildcard means it can look at nested directories, single gets sample name
     
     if not fasta_files:
-        print("Warning: No genome FASTA files found. Falling back to default read count.")
-        return NO_READS_IN_SUBSAMPLE
+        print("Warning: No genome FASTA files found.")
+        return NO_READS_IN_SUBSAMPLE #defaults empty to basic parameters 
 
-    genome_lengths = []
-    for fasta in fasta_files:
-        current_len = 0
+    genome_lengths = [] #take the genome lengths as a list 
+    for fasta in fasta_files: 
+        current_len = 0 #start at 0
         with open(fasta, "r") as f:
             for line in f:
                 if not line.startswith(">"):
                     current_len += len(line.strip())
         if current_len > 0:
-            genome_lengths.append(current_len)
+            genome_lengths.append(current_len) #append the length of the data 
 
     if not genome_lengths:
-        return NO_READS_IN_SUBSAMPLE
+        return NO_READS_IN_SUBSAMPLE 
 
-    avg_genome_length = sum(genome_lengths) / len(genome_lengths)
+    avg_genome_length = sum(genome_lengths) / len(genome_lengths) #find the average length 
     
-    read_lengths = []
+    read_lengths = [] 
     with open(sample_fastq_path, "r") as f:
         for i, line in enumerate(f):
-            if i % 4 == 1:
+            if i % 4 == 1: #length is divided by 4 due to formatting of fastq 
                 read_lengths.append(len(line.strip()))
             if len(read_lengths) >= 100:
-                break
+                break #stops at 100 for effieciency and to not blow up the server 
                 
-    avg_read_length = sum(read_lengths) / len(read_lengths) if read_lengths else 150
+    avg_read_length = sum(read_lengths) / len(read_lengths) if read_lengths else 150 #find the average length of the reads 
 
-    target_total_bases = avg_genome_length * 20
-    target_reads_per_file = int((target_total_bases / 2) / avg_read_length)
+    target_total_bases = avg_genome_length * 20 #find the 20x coverage 
+    target_reads_per_file = int((target_total_bases / 2) / avg_read_length) #divided by 2 due to the paired end data
 
-    print(f"  - Analyzed {len(genome_lengths)} reference genomes.")
+    print(f"  - Analyzed {len(genome_lengths)} reference genomes.") #comfort printing 
     print(f"  - Average Genome Length: {avg_genome_length:,.0f} bp")
     print(f"  - Calculated Reads per FASTQ file for 20x: {target_reads_per_file:,} reads\n")
     
-    return target_reads_per_file
+    return target_reads_per_file #this is used for downstream sampling applicatons 
 
 
 # --- PIPELINE STEP 2: FETCH FASTQS VIA SRA ---
 def download_fastqs_from_biosamples(filtered_df, out_dir):
-    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True) #make a directory to hold fastqs 
 
-    biosamples = filtered_df["Assembly BioSample Accession"].dropna().unique().tolist()
+    biosamples = filtered_df["Assembly BioSample Accession"].dropna().unique().tolist() #filtering the tsv
     assembly_accessions = filtered_df["Assembly Accession"].dropna().unique().tolist()
     
-    queries = list(set(biosamples + assembly_accessions))
-    print(f"=== Fetching SRA Run IDs for {len(queries)} target identifiers ===")
+    queries = list(set(biosamples + assembly_accessions)) #make a list of queries 
+    print(f"=== Fetching SRA Run IDs for {len(queries)} target identifiers ===") #print how many are found after quality control 
 
-    srr_runs = set()
+    srr_runs = set() 
     for q in queries:
         query_term = f'"{q}"'
         print(f"Searching SRA for: {q}...")

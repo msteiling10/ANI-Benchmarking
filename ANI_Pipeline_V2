@@ -149,106 +149,106 @@ def download_fastqs_from_biosamples(filtered_df, out_dir):
         query_term = f'"{q}"'
         print(f"Searching SRA for: {q}...")
         try:
-            handle = Entrez.esearch(db="sra", term=query_term, retmax=20)
-            record = Entrez.read(handle)
-            handle.close()
+            handle = Entrez.esearch(db="sra", term=query_term, retmax=20) #use entrez e search to pull the sra
+            record = Entrez.read(handle) #use the read function to get the data 
+            handle.close() #because it is polite to do this 
 
-            id_list = record.get("IdList", [])
-            print(f"  -> Found SRA internal IDs: {id_list}")
+            id_list = record.get("IdList", []) #get a list of the IDs from the records 
+            print(f"  -> Found SRA internal IDs: {id_list}") #print what we have found 
             
             if id_list:
-                sum_handle = Entrez.esummary(db="sra", id=",".join(id_list))
+                sum_handle = Entrez.esummary(db="sra", id=",".join(id_list)) #this lets info be pulled without using the whole record 
                 sum_bytes = sum_handle.read()
-                sum_handle.close()
+                sum_handle.close() 
 
                 # Decode bytes to string so regex can parse it successfully
                 sum_text = sum_bytes.decode('utf-8', errors='ignore')
 
-                found_runs = re.findall(r'\b([SED]RR\d+)\b', sum_text)
-                print(f"  -> Found Run accession(s): {found_runs}")
+                found_runs = re.findall(r'\b([SED]RR\d+)\b', sum_text) #type all the found runs 
+                print(f"  -> Found Run accession(s): {found_runs}") #what data was sucessfully pulled 
                 for r in found_runs:
                     srr_runs.add(r)
-            time.sleep(0.3)
+            time.sleep(0.3) #timeout if taking too long, this seems to be the polite time requested by NCBI
         except Exception as e:
-            print(f"Error finding SRA run for {q}: {e}")
+            print(f"Error finding SRA run for {q}: {e}") #write error message 
 
-    srr_list = list(srr_runs)
+    srr_list = list(srr_runs) #list of runs 
     if not srr_list:
-        print("\n[WARNING]: No SRA run IDs were found for the queried identifiers.")
+        print("\n[WARNING]: No SRA run IDs were found for the queried identifiers.") #if there are no runs give the error message 
         return
 
-    print(f"=== Executing fasterq-dump for {len(srr_list)} unique runs ===")
+    print(f"=== Executing fasterq-dump for {len(srr_list)} unique runs ===") #fasterq-dump pulls the actual genome, can be subbed with fastq-dump
     for srr in srr_list:
-        print(f"Downloading FASTQ for {srr}...")
-        cmd = f"fasterq-dump --split-files --outdir {out_dir} {srr}"
+        print(f"Downloading FASTQ for {srr}...") #downloading the SRR message 
+        cmd = f"fasterq-dump --split-files --outdir {out_dir} {srr}" #command that splits into _1 and _2 for genome reads in the output directory 
         run_command(cmd)
         
-# --- PIPELINE STEP 3: SUBSAMPLE, TRIM, AND ASSEMBLE ---
+# --- PIPELINE STEP 3: SUBSAMPLE, TRIM, AND ASSEMBLE --- #actual processing for the genomes
 def subsample_trim_assemble_paired_end(
     data_folder, output_folder, subsamples, no_reads_in_subsample
 ):
-    all_fastqs = sorted(glob.glob(os.path.join(data_folder, "*.fastq")))
+    all_fastqs = sorted(glob.glob(os.path.join(data_folder, "*.fastq"))) #for all the fastqs make a directory 
     if not all_fastqs:
-        print(f"No FASTQ files found in {data_folder}!")
+        print(f"No FASTQ files found in {data_folder}!") #if folder empty error message 
         return
-
-    sample_pairs = {}
-    for filepath in all_fastqs:
-        filename = os.path.basename(filepath)
-        base_name = filename.split(".")[0]
-        if base_name.endswith("_1"):
-            sample_id = base_name[:-2]
+ 
+    sample_pairs = {} #data must be in pairs in the list 
+    for filepath in all_fastqs: #for each filepath 
+        filename = os.path.basename(filepath) #get filename
+        base_name = filename.split(".")[0] #base name is id
+        if base_name.endswith("_1"): #forward read name
+            sample_id = base_name[:-2] #backward read name
             sample_pairs.setdefault(sample_id, {})["R1"] = filepath
         elif base_name.endswith("_2"):
             sample_id = base_name[:-2]
             sample_pairs.setdefault(sample_id, {})["R2"] = filepath
 
-    valid_pairs = []
+    valid_pairs = [] #pair have to have both reads...because its a pair
     for sample_id, reads in sample_pairs.items():
         if "R1" in reads and "R2" in reads:
             valid_pairs.append((sample_id, reads["R1"], reads["R2"]))
 
     print(f"=== Successfully validated {len(valid_pairs)} paired-end samples ===")
 
-    for sample_no, fastq1_path, fastq2_path in valid_pairs:
-        ss_dir, trim_dir, assemble_dir = init_folders(output_folder, sample_no)
-        no_reads_in_sample = count_reads(fastq1_path)
-        reads_to_take = min(no_reads_in_subsample, no_reads_in_sample)
+    for sample_no, fastq1_path, fastq2_path in valid_pairs: #makes all the folders 
+        ss_dir, trim_dir, assemble_dir = init_folders(output_folder, sample_no) #make all the directories 
+        no_reads_in_sample = count_reads(fastq1_path) #count the reads in the subsamples 
+        reads_to_take = min(no_reads_in_subsample, no_reads_in_sample) #grab the smaller one
 
-        random.seed(RANDOM_SEED)
-        random_seeds = random.sample(range(0, no_reads_in_sample), min(subsamples, no_reads_in_sample))
-
-        for index, seed in enumerate(random_seeds):
+        random.seed(RANDOM_SEED) #random seed changes what part of the genome we grab as the subsample
+        random_seeds = random.sample(range(0, no_reads_in_sample), min(subsamples, no_reads_in_sample)) 
+ 
+        for index, seed in enumerate(random_seeds): #printing a statement that shows the subsampling worked 
             print(f"\n=== Sample {sample_no} | Subsample Run {index+1}/{len(random_seeds)} (Seed: {seed}) ===")
             
-            ss_f1 = os.path.join(ss_dir, f"{sample_no}_1_ss{index}.fastq")
-            ss_f2 = os.path.join(ss_dir, f"{sample_no}_2_ss{index}.fastq")
+            ss_f1 = os.path.join(ss_dir, f"{sample_no}_1_ss{index}.fastq") #forward subsample
+            ss_f2 = os.path.join(ss_dir, f"{sample_no}_2_ss{index}.fastq") #reverse subsample 
 
-            run_command(f"seqtk sample -s{seed} {fastq1_path} {reads_to_take} > {ss_f1}")
-            run_command(f"seqtk sample -s{seed} {fastq2_path} {reads_to_take} > {ss_f2}")
+            run_command(f"seqtk sample -s{seed} {fastq1_path} {reads_to_take} > {ss_f1}") #run seqtk on each seed to actually get a subsample
+            run_command(f"seqtk sample -s{seed} {fastq2_path} {reads_to_take} > {ss_f2}") #seeds MATCH
 
-            trim_f1 = os.path.join(trim_dir, f"{sample_no}_1_ss{index}_trim.fastq")
+            trim_f1 = os.path.join(trim_dir, f"{sample_no}_1_ss{index}_trim.fastq") #this gets folders ready for the trimmed data
             trim_f2 = os.path.join(trim_dir, f"{sample_no}_2_ss{index}_trim.fastq")
-            stats_file = os.path.join(trim_dir, f"{sample_no}_ss{index}_trim.stats")
+            stats_file = os.path.join(trim_dir, f"{sample_no}_ss{index}_trim.stats") #holding stats 
 
             bbduk_cmd = [
-                "bbduk.sh", "-Xmx1G", "overwrite=t",
-                f"in1={ss_f1}", f"in2={ss_f2}",
-                f"out1={trim_f1}", f"out2={trim_f2}",
+                "bbduk.sh", "-Xmx1G", "overwrite=t",        #XMX limiting amount of data usage, overwrite files allowed
+                f"in1={ss_f1}", f"in2={ss_f2}",            #infiles are the subsamples matching of 1 and 2
+                f"out1={trim_f1}", f"out2={trim_f2}",        #force trims left and right for output files
                 "qtrim=rl", "trimq=20", "ftl=15", "ftr=135",
-                "maq=20", "maxns=0", f"stats={stats_file}",
+                "maq=20", "maxns=0", f"stats={stats_file}", #quality standards and write stats 
                 "statscolumns=5", f"threads={THREADS}",
             ]
-            run_command(bbduk_cmd)
+            run_command(bbduk_cmd) #BBDUK actually does the trimming
 
-            sample_assembly_out = os.path.join(assemble_dir, f"{sample_no}_ss{index}_assembly")
+            sample_assembly_out = os.path.join(assemble_dir, f"{sample_no}_ss{index}_assembly") #get the assembly file ready 
             spades_cmd = [
-                "spades.py", "--only-assembler", "-t", THREADS,
+                "spades.py", "--only-assembler", "-t", THREADS, #use only the assembler on Spades with the trimmed subsamples passed in
                 "-1", trim_f1, "-2", trim_f2, "-o", sample_assembly_out,
             ]
-            run_command(spades_cmd)
+            run_command(spades_cmd) #run the command
 
-    print("\nAll subsampling, trimming, and assembly operations complete!")
+    print("\nAll subsampling, trimming, and assembly operations complete!") #finished message!
 
 # --- PIPELINE STEP 4: RUN FASTANI BENCHMARK ---
 def run_fast_ani(output_folder, genomes_dir):

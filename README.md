@@ -62,4 +62,11 @@ Size (Mb)
 In CONFIGURATION ZONE of the ANI Pipeline add the path of the tsv and the name of the organism for outfiles. 
 
 Running the code can be done with the following command:
+```Bash
 python ANI_Pipeline_V2.py
+```
+Depending on you computing power, this pipeline might take a significant portion of time to assemble the genomes. I would recommend running this pipeline in screen or with nohup.
+```Bash
+nohup python ANI_Pipeline_V2.py
+```
+

@@ -54,7 +54,7 @@ Annotation\
 CheckM completeness (%)\
 CheckM contamination (%)\
 Scaffolds\
-Size (Mb)\
+Size (Mb)
 
 
 

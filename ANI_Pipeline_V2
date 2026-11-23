@@ -4,6 +4,8 @@ import random
 import re
 import subprocess
 import time
+import gzip
+import shutil
 import pandas as pd
 from Bio import Entrez
 
@@ -20,9 +22,8 @@ organism = "Lactobacillus_gasseri" # Add the organism you are querying for file 
 infile = "Lactobacillus_gasseri.tsv" # Infile name, formatted as tsv
 
 # Directory Outputs
-outfile_for_genomes = "Lactobacillus_gasseri_testing_genomes" 
+outfile_for_genomes = "testing_genomes" 
 outfile_for_fastq = "./fastq_data"
-output_csv="Lactobacillus_gasseri_ani_benchmark_summary.csv"
 OUTPUT_FOLDER = "./results"
 
 # Filtering Thresholds & Settings
@@ -84,6 +85,18 @@ def download_via_ncbi_genome_download(acc_file, out_dir): #command uses ncbi-gen
     cmd = f"ncbi-genome-download --section refseq --assembly-accessions {acc_file} --formats fasta,gff --output-folder {out_dir} {NCBI_GENOME_SECTION}"
     print("=== Executing ncbi-genome-download ===") #comfort running message
     run_command(cmd) #run the command string from above
+    
+    # Automatically decompress gzipped fasta files (.fna.gz / .fasta.gz) so downstream tools can read them
+    gz_files = glob.glob(os.path.join(out_dir, "**", "*.fna.gz"), recursive=True) + \
+               glob.glob(os.path.join(out_dir, "**", "*.fasta.gz"), recursive=True)
+               
+    for gz_file in gz_files:
+        output_file = gz_file[:-3]  # Removes '.gz' extension
+        if not os.path.exists(output_file):
+            print(f"Decompressing: {os.path.basename(gz_file)}")
+            with gzip.open(gz_file, 'rb') as f_in, open(output_file, 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
+                
     print(f"Genomes saved in directory: {out_dir}\n") #comfort running message
 
 
@@ -306,20 +319,54 @@ def run_fast_ani(output_folder, genomes_dir):
         except Exception as e:
             print(f"Error running FastANI for {query_contig}: {e}")
             
-
+            
 # --- PIPELINE STEP 5: RUN PYANI ---
 def run_pyani(output_folder, genomes_dir):
     """
-    Runs PyANI comparing assembled contigs against reference genomes.
+    Runs PyANI by staging reference genomes and query contigs together 
+    into a common directory for all-against-all comparison.
     """
     print("=== Executing PyANI ===")
-    os.makedirs("pyani_results", exist_ok=True)
-    
+    pyani_input_dir = "pyani_input_staging"
     pyani_output_dir = os.path.join("pyani_results", "anim_out")
     
+    # 1. Clean or create staging and output directories
+    if os.path.exists(pyani_output_dir):
+        import shutil
+        shutil.rmtree(pyani_output_dir)
+    os.makedirs(pyani_output_dir, exist_ok=True)
+    
+    if os.path.exists(pyani_input_dir):
+        import shutil
+        shutil.rmtree(pyani_input_dir)
+    os.makedirs(pyani_input_dir, exist_ok=True)
+
+    # 2. Copy reference genomes into staging
+    ref_files = glob.glob(os.path.join(genomes_dir, "**", "*.fna"), recursive=True) + \
+                glob.glob(os.path.join(genomes_dir, "**", "*.fasta"), recursive=True)
+    for ref in ref_files:
+        dest = os.path.join(pyani_input_dir, os.path.basename(ref))
+        if not os.path.exists(dest):
+            shutil.copy(ref, dest)
+
+    # 3. Copy query contigs into staging (renaming them to avoid name collisions)
+    contig_files = glob.glob(os.path.join(output_folder, "**", "contigs.fasta"), recursive=True)
+    if not contig_files:
+        print("[WARNING]: No assembled contigs found for PyANI.")
+        return
+
+    for query_contig in contig_files:
+        path_parts = query_contig.split(os.sep)
+        sample_name = path_parts[-3]
+        subsample_id = path_parts[-2].replace("_assembly", "")
+        unique_contig_name = f"{sample_name}_{subsample_id}_contigs.fasta"
+        dest = os.path.join(pyani_input_dir, unique_contig_name)
+        shutil.copy(query_contig, dest)
+
+    # 4. Run PyANI anim command
     pyani_command = [
         "pyani", "anim",
-        "-i", genomes_dir,
+        "-i", pyani_input_dir,
         "-o", pyani_output_dir,
         "--graphics"
     ]
@@ -330,7 +377,6 @@ def run_pyani(output_folder, genomes_dir):
         print("  -> PyANI execution completed successfully.")
     except Exception as e:
         print(f"Error running PyANI: {e}")
-
 
 # --- PIPELINE STEP 6: RUN MASH ---
 def run_mash(output_folder, genomes_dir):
@@ -384,9 +430,9 @@ def run_mash(output_folder, genomes_dir):
 
 
 # --- PIPELINE STEP 7: COMPILE ALL RESULTS INTO A SINGLE CSV ---
-def compile_results_to_csv(output_csv):
+def compile_results_to_csv(output_csv="ani_benchmark_summary.csv"):
     """
-    Parses FastANI and Mash output files and compiles them into a unified CSV for stats.
+    Parses FastANI, Mash, and PyANI output files and compiles them into a unified CSV for stats.
     """
     print("=== Compiling Results into CSV ===")
     records = []
@@ -408,11 +454,11 @@ def compile_results_to_csv(output_csv):
                     "subsample": subsample_id,
                     "tool": "FastANI",
                     "reference": os.path.basename(str(row["reference"])),
-                    "ani": row["ani"],
-                    "metric_extra": row["aligned_fraction_query"]
+                    "ani": float(row["ani"]),
+                    "metric_extra": float(row["aligned_fraction_query"])
                 })
 
-    # 2. Parse Mash results
+    # 2. Parse Mash results (Fixed with header=None)
     mash_files = glob.glob(os.path.join("mash_results", "*_mash.tab"))
     for file in mash_files:
         filename_base = os.path.basename(file).replace("_mash.tab", "")
@@ -421,18 +467,43 @@ def compile_results_to_csv(output_csv):
         subsample_id = parts[1] if len(parts) > 1 else "unknown"
 
         if os.path.getsize(file) > 0:
-            df_mash = pd.read_csv(file, sep="\t")
+            df_mash = pd.read_csv(file, sep="\t", header=None,
+                                  names=["reference", "query", "mash_distance", "p_value", "matching_hashes"])
             for _, row in df_mash.iterrows():
-                mash_dist = row.iloc[2]
+                mash_dist = float(row["mash_distance"])
                 approx_ani = (1.0 - mash_dist) * 100
                 records.append({
                     "sample": sample_name,
                     "subsample": subsample_id,
                     "tool": "Mash",
-                    "reference": os.path.basename(str(row.iloc[0])),
+                    "reference": os.path.basename(str(row["reference"])),
                     "ani": approx_ani,
                     "metric_extra": mash_dist
                 })
+
+    # 3. Parse PyANI results (ANIm percentage identity matrix)
+    pyani_files = glob.glob(os.path.join("pyani_results", "anim_out", "*percentage_identity.tab"))
+    for file in pyani_files:
+        if os.path.getsize(file) > 0:
+            df_pyani = pd.read_csv(file, sep="\t", index_col=0)
+            # PyANI outputs a square matrix: rows are queries/references, columns are references
+            for query_id in df_pyani.index:
+                # Try to parse sample and subsample from query name if applicable
+                q_parts = str(query_id).split("_")
+                sample_name = q_parts[0]
+                subsample_id = q_parts[1] if len(q_parts) > 1 else "unknown"
+                
+                for ref_id in df_pyani.columns:
+                    identity = df_pyani.loc[query_id, ref_id]
+                    if pd.notna(identity):
+                        records.append({
+                            "sample": sample_name,
+                            "subsample": subsample_id,
+                            "tool": "PyANI",
+                            "reference": os.path.basename(str(ref_id)),
+                            "ani": float(identity) * 100,  # PyANI outputs fraction (e.g. 0.99), convert to %
+                            "metric_extra": float(identity)
+                        })
 
     # Convert to DataFrame and save
     if records:
@@ -441,7 +512,7 @@ def compile_results_to_csv(output_csv):
         print(f"[SUCCESS]: Compiled benchmark statistics saved to {output_csv}")
     else:
         print("[WARNING]: No benchmark results found to compile.")
-
+        
 
 # ==============================================================================
 # MAIN EXECUTION PIPELINE
@@ -488,4 +559,4 @@ if __name__ == "__main__":
     run_mash(output_folder=OUTPUT_FOLDER, genomes_dir=outfile_for_genomes)
     
     # Compile all tool outputs into a single CSV for downstream statistics
-    compile_results_to_csv(output_csv="ani_benchmark_summary.csv")
+    compile_results_to_csv(output_csv="Lactobacillus_gasseri_ani_benchmark_summary.csv")

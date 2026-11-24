@@ -25,6 +25,7 @@ infile = "Lactobacillus_gasseri.tsv" # Infile name, formatted as tsv
 outfile_for_genomes = "testing_genomes" 
 outfile_for_fastq = "./fastq_data"
 OUTPUT_FOLDER = "./results"
+output_csv="Lactobacillus_gasseri_ani_benchmark_summary.csv"
 
 # Filtering Thresholds & Settings
 contamination_threshold = 5.0 #this number can be adjusted to allow for more or less contamination 
@@ -550,4 +551,4 @@ if __name__ == "__main__":
     run_skani(output_folder=OUTPUT_FOLDER, genomes_dir=outfile_for_genomes)
     run_mash(output_folder=OUTPUT_FOLDER, genomes_dir=outfile_for_genomes)
     
-    compile_results_to_csv(output_csv="Lactobacillus_gasseri_ani_benchmark_summary.csv")
+    compile_results_to_csv(output_csv)

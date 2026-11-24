@@ -262,18 +262,13 @@ def subsample_trim_assemble_paired_end(
     print("\nAll subsampling, trimming, and assembly operations complete!")
 
 
-# --- PIPELINE STEP 4: RUN FASTANI ---
+# --- PIPELINE STEP 4: RUN FASTANI (WITH TIMING) ---
 def run_fast_ani(output_folder, genomes_dir): 
-    """
-    Runs FastANI comparing all assembled contigs against reference genomes.
-    """
     print("=== Executing FastANI ===")
-    
     ref_files = [f for f in glob.glob(os.path.join(genomes_dir, "**", "*.fna"), recursive=True) + \
                  glob.glob(os.path.join(genomes_dir, "**", "*.fasta"), recursive=True) if os.path.getsize(f) > 0]
     
     if not ref_files:
-        print("[WARNING]: No reference genomes found for FastANI.")
         return
 
     ref_list_path = "reference_genomes_list.txt"
@@ -283,11 +278,10 @@ def run_fast_ani(output_folder, genomes_dir):
 
     contig_files = glob.glob(os.path.join(output_folder, "**", "contigs.fasta"), recursive=True)
     if not contig_files:
-        print("[WARNING]: No assembled contigs found to run FastANI against.")
         return
 
-    os.makedirs("fastani_results", exist_ok=True)
-
+    os.makedirs(os.path.join("fastani_results", "times"), exist_ok=True)
+    
     for query_contig in contig_files:
         if os.path.getsize(query_contig) == 0:
             continue
@@ -296,6 +290,7 @@ def run_fast_ani(output_folder, genomes_dir):
         subsample_id = path_parts[-2].replace("_assembly", "")
         
         output_file = os.path.join("fastani_results", f"{sample_name}_{subsample_id}_fastani.txt")
+        time_file = os.path.join("fastani_results", f"{sample_name}_{subsample_id}_fastani_time.txt")
         
         fastani_cmd = [
             "fastANI",
@@ -307,17 +302,19 @@ def run_fast_ani(output_folder, genomes_dir):
         
         print(f"Running FastANI for {sample_name} ({subsample_id})...")
         try:
+            start_t = time.time()
             run_command(fastani_cmd)
-            print(f"  -> Saved output to {output_file}")
+            elapsed_t = time.time() - start_t
+            
+            with open(time_file, "w") as tf:
+                tf.write(str(elapsed_t))
+            print(f"  -> Finished in {elapsed_t:.2f} seconds")
         except Exception as e:
             print(f"Error running FastANI for {query_contig}: {e}")
 
 
-# --- PIPELINE STEP 5: RUN SKANI (PyANI Replacement) ---
+# --- PIPELINE STEP 5: RUN SKANI (WITH TIMING) ---
 def run_skani(output_folder, genomes_dir):
-    """
-    Runs skani comparing all assembled contigs against reference genomes.
-    """
     print("=== Executing skani ===")
     os.makedirs("skani_results", exist_ok=True)
     
@@ -325,12 +322,10 @@ def run_skani(output_folder, genomes_dir):
                  glob.glob(os.path.join(genomes_dir, "**", "*.fasta"), recursive=True) if os.path.getsize(f) > 0]
     
     if not ref_files:
-        print("[WARNING]: No reference genomes found for skani.")
         return
 
     contig_files = glob.glob(os.path.join(output_folder, "**", "contigs.fasta"), recursive=True)
     if not contig_files:
-        print("[WARNING]: No assembled contigs found for skani.")
         return
 
     for query_contig in contig_files:
@@ -342,6 +337,7 @@ def run_skani(output_folder, genomes_dir):
         subsample_id = path_parts[-2].replace("_assembly", "")
         
         skani_out_file = os.path.join("skani_results", f"{sample_name}_{subsample_id}_skani.tsv")
+        time_file = os.path.join("skani_results", f"{sample_name}_{subsample_id}_skani_time.txt")
         
         skani_cmd = [
             "skani", "dist",
@@ -353,17 +349,19 @@ def run_skani(output_folder, genomes_dir):
         
         print(f"Running skani for {sample_name} ({subsample_id})...")
         try:
+            start_t = time.time()
             run_command(skani_cmd)
-            print(f"  -> Saved skani output to {skani_out_file}")
+            elapsed_t = time.time() - start_t
+            
+            with open(time_file, "w") as tf:
+                tf.write(str(elapsed_t))
+            print(f"  -> Finished in {elapsed_t:.2f} seconds")
         except Exception as e:
             print(f"Error running skani for {query_contig}: {e}")
 
 
-# --- PIPELINE STEP 6: RUN MASH ---
+# --- PIPELINE STEP 6: RUN MASH (WITH TIMING) ---
 def run_mash(output_folder, genomes_dir):
-    """
-    Runs Mash by sketching reference genomes and calculating distances against query contigs.
-    """
     print("=== Executing Mash ===")
     os.makedirs("mash_results", exist_ok=True)
     
@@ -371,7 +369,6 @@ def run_mash(output_folder, genomes_dir):
                  glob.glob(os.path.join(genomes_dir, "**", "*.fasta"), recursive=True) if os.path.getsize(f) > 0]
     
     if not ref_files:
-        print("[WARNING]: No reference genomes found for Mash.")
         return
 
     sketch_path = "mash_references.msh"
@@ -393,6 +390,7 @@ def run_mash(output_folder, genomes_dir):
         subsample_id = path_parts[-2].replace("_assembly", "")
         
         mash_out_file = os.path.join("mash_results", f"{sample_name}_{subsample_id}_mash.tab")
+        time_file = os.path.join("mash_results", f"{sample_name}_{subsample_id}_mash_time.txt")
         
         mash_dist_cmd = [
             "mash", "dist",
@@ -402,20 +400,33 @@ def run_mash(output_folder, genomes_dir):
         
         print(f"Running Mash dist for {sample_name} ({subsample_id})...")
         try:
+            start_t = time.time()
             with open(mash_out_file, "w") as outfile:
                 subprocess.run(mash_dist_cmd, stdout=outfile, check=True)
-            print(f"  -> Saved Mash output to {mash_out_file}")
+            elapsed_t = time.time() - start_t
+            
+            with open(time_file, "w") as tf:
+                tf.write(str(elapsed_t))
+            print(f"  -> Finished in {elapsed_t:.2f} seconds")
         except Exception as e:
             print(f"Error running Mash for {query_contig}: {e}")
 
 
 # --- PIPELINE STEP 7: COMPILE ALL RESULTS INTO A SINGLE CSV ---
 def compile_results_to_csv(output_csv="ani_benchmark_summary.csv"):
-    """
-    Parses FastANI, skani, and Mash output files and compiles them into a unified CSV.
-    """
     print("=== Compiling Results into CSV ===")
     records = []
+
+    # Helper to load recorded execution time from subfolders
+    def get_time(subfolder, prefix, sample, subsample):
+        time_file = os.path.join(subfolder, "times", f"{sample}_{subsample}_{prefix}_time.txt")
+        if os.path.exists(time_file):
+            try:
+                with open(time_file, "r") as tf:
+                    return float(tf.read().strip())
+            except:
+                pass
+        return 0.0
 
     # 1. Parse FastANI results
     fastani_files = glob.glob(os.path.join("fastani_results", "*_fastani.txt"))
@@ -424,6 +435,7 @@ def compile_results_to_csv(output_csv="ani_benchmark_summary.csv"):
         parts = filename_base.split("_")
         sample_name = parts[0]
         subsample_id = parts[1] if len(parts) > 1 else "unknown"
+        run_time = get_time("fastani_results", "fastani", sample_name, subsample_id)
 
         if os.path.getsize(file) > 0:
             df_fastani = pd.read_csv(file, sep="\t", header=None, 
@@ -435,7 +447,8 @@ def compile_results_to_csv(output_csv="ani_benchmark_summary.csv"):
                     "tool": "FastANI",
                     "reference": os.path.basename(str(row["reference"])),
                     "ani": float(row["ani"]),
-                    "metric_extra": float(row["aligned_fraction_query"])
+                    "metric_extra": float(row["aligned_fraction_query"]),
+                    "time_taken_sec": run_time
                 })
 
     # 2. Parse skani results
@@ -445,6 +458,7 @@ def compile_results_to_csv(output_csv="ani_benchmark_summary.csv"):
         parts = filename_base.split("_")
         sample_name = parts[0]
         subsample_id = parts[1] if len(parts) > 1 else "unknown"
+        run_time = get_time("skani_results", "skani", sample_name, subsample_id)
 
         if os.path.getsize(file) > 0:
             df_skani = pd.read_csv(file, sep="\t")
@@ -455,7 +469,8 @@ def compile_results_to_csv(output_csv="ani_benchmark_summary.csv"):
                     "tool": "skani",
                     "reference": os.path.basename(str(row["Ref_file"])),
                     "ani": float(row["ANI"]),
-                    "metric_extra": float(row["Align_fraction_query"])
+                    "metric_extra": float(row["Align_fraction_query"]),
+                    "time_taken_sec": run_time
                 })
 
     # 3. Parse Mash results
@@ -465,6 +480,7 @@ def compile_results_to_csv(output_csv="ani_benchmark_summary.csv"):
         parts = filename_base.split("_")
         sample_name = parts[0]
         subsample_id = parts[1] if len(parts) > 1 else "unknown"
+        run_time = get_time("mash_results", "mash", sample_name, subsample_id)
 
         if os.path.getsize(file) > 0:
             df_mash = pd.read_csv(file, sep="\t", header=None,
@@ -478,10 +494,10 @@ def compile_results_to_csv(output_csv="ani_benchmark_summary.csv"):
                     "tool": "Mash",
                     "reference": os.path.basename(str(row["reference"])),
                     "ani": approx_ani,
-                    "metric_extra": mash_dist
+                    "metric_extra": mash_dist,
+                    "time_taken_sec": run_time
                 })
 
-    # Convert to DataFrame and save
     if records:
         summary_df = pd.DataFrame(records)
         summary_df.to_csv(output_csv, index=False)
@@ -489,7 +505,6 @@ def compile_results_to_csv(output_csv="ani_benchmark_summary.csv"):
     else:
         print("[WARNING]: No benchmark results found to compile.")
         
-
 # ==============================================================================
 # MAIN EXECUTION PIPELINE
 # ==============================================================================
@@ -497,13 +512,11 @@ if __name__ == "__main__":
     print("=== Pipeline Started ===")
     df = pd.read_csv(infile, sep="\t")
 
-    # 1. Filter by contamination threshold and sequencing technology
     df_filtered = df[
         (df["CheckM contamination"] <= contamination_threshold) &
         (df["Assembly Sequencing Tech"] == sequencing_tech)
     ]
 
-    # 2. Sort by CheckM completeness in descending order and take top 10
     df_filtered = df_filtered.sort_values(by="CheckM completeness", ascending=False)
     df_filtered = df_filtered.head(max_samples)
     
@@ -512,7 +525,6 @@ if __name__ == "__main__":
     accession_file = f"{organism}_download_accessions.txt"
     df_filtered["Assembly Accession"].to_csv(accession_file, index=False, header=False)
 
-    # Executions
     download_via_ncbi_genome_download(accession_file, out_dir=outfile_for_genomes)
     download_fastqs_from_biosamples(filtered_df=df_filtered, out_dir=outfile_for_fastq)
 
@@ -528,10 +540,8 @@ if __name__ == "__main__":
         no_reads_in_subsample=dynamic_reads_target,
     )
     
-    # Run Benchmarking Tools (FastANI, skani, and Mash)
     run_fast_ani(output_folder=OUTPUT_FOLDER, genomes_dir=outfile_for_genomes)
     run_skani(output_folder=OUTPUT_FOLDER, genomes_dir=outfile_for_genomes)
     run_mash(output_folder=OUTPUT_FOLDER, genomes_dir=outfile_for_genomes)
     
-    # Compile all tool outputs into a single CSV for downstream statistics
     compile_results_to_csv(output_csv="Lactobacillus_gasseri_ani_benchmark_summary.csv")
